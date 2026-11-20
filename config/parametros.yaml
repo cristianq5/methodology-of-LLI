@@ -1,0 +1,263 @@
+# =====================================================================
+# Parámetros del MÉTODO LLI (Leafiness-LiDAR Index), comunes a todos los ensayos.
+# Lo propio de cada ensayo (LAS, carpeta de brutos, archivo vectorial, CRS, hileras de prueba, salida) va en la
+# ficha del ensayo (ver ensayo_plantilla.yaml). Una ficha puede sobrescribir cualquier valor de aquí en
+# su sección "ajustes:" (sin tocar este fichero).
+# Origen de cada valor:
+#   [FICHA] = metodología LLI (Sandonís-Pozo et al.)
+#   [DATO]  = comprobado con datos del CHCNAV RS30 (ensayo de referencia: IFAPA Cabra, 2026-05-06)
+#   [SUP]   = supuesto inicial; ajustarlo tras 01_qc o con un análisis de sensibilidad
+# =====================================================================
+
+proyecto:
+  version_config: "1.0"
+  semilla_aleatoria: 42                    # [SUP] reproducibilidad de muestreos y RANSAC
+
+crs:
+  # El EPSG de trabajo (proyectado, en metros) se toma de la ficha del ensayo o, si no lo dice, de la cabecera del LAS.
+  epsg_trayectoria_geo: 4937               # [SUP] ETRS89 3D geográfico (o 4979 WGS84); h elipsoidal del PosI
+  z_referencia: "elipsoidal"               # [SUP] comprobar en 01_qc: trayectoria ≈ DTM + 1-1,5 m
+
+tiempo:
+  campo: "gps_time"                        # [DATO] tiempo Unix UTC (s), igual base que PosI/high_freq
+  ordenar_nube: false                      # [DATO] el fichero no está en orden temporal; no hace falta ordenar (se interpola con la trayectoria ordenada)
+  tolerancia_hueco_trayectoria_s: 0.05     # [SUP] puntos con hueco de trayectoria mayor -> sin origen de rayo
+
+lectura:
+  tam_trozo_puntos: 5000000                # [DATO] trozos de 5 M (como en el informe forense)
+  dtype_coordenadas: "float64"             # UTM necesita float64; las coordenadas locales s,t,h pueden ir en float32
+
+# ---------------------------------------------------------------------
+# 01_qc
+# ---------------------------------------------------------------------
+qc:
+  densidad_celda_m: 1.0                    # [DATO] igual que en informe_las
+  densidad_min_nucleo_pts_m2: 1000         # [SUP] celdas del núcleo útil (99,25 % de los puntos)
+  distancia_tray_eje_esperada_m: [1.0, 3.0]   # [SUP] la trayectoria debe ir por las calles (marco de 4 m)
+  altura_sensor_sobre_dtm_m: [0.8, 2.0]    # [SUP] equipo de mano
+  min_pct_rtk_fijo: 80                     # [SUP] por debajo -> advertencia de deriva
+  exigir_bilateral: true                   # [FICHA] cada fila escaneada por las dos calles
+  margen_mapa_m: 10.0                      # [SUP] margen (m) alrededor del archivo vectorial en el mapa de control de 01_qc
+
+# ---------------------------------------------------------------------
+# 02_recorte
+# ---------------------------------------------------------------------
+recorte:
+  # modo, hileras y tramo de prueba: en la ficha del ensayo (seccion "ejecucion_ensayo")
+  ventana_tiempo_pad_s: 2.0                # [SUP] margen alrededor de los pasos del sensor por el tramo
+  ventana_tiempo_s_pad_m: 2.0              # [SUP] el sensor se considera "en el tramo" si s está en [s0-pad, s1+pad]
+  ventana_t_abs_min_m: 0.8                 # [SUP] |t| mínimo del sensor para contar como paso por la calle (QA-19)
+  ventana_tiempo_t_max_m: 4.5              # [SUP] |t| máximo del sensor respecto al eje para contar el paso
+  ventana_hueco_s: 1.0                     # [SUP] hueco temporal que separa pasos distintos
+  buffer_recorte_m: 2.4                    # [DATO usuario] ±2,4 m del eje. Mayor que hilera.buffer_m (1,2) para conservar el "fondo" de los rayos y el suelo de la calle (con un marco de 4 m, la calle llega a ~2 m del eje)
+  margen_z_m: [-1.0, 6.0]                  # [SUP] respecto al DTM aproximado, para quitar ruido aéreo
+
+# ---------------------------------------------------------------------
+# 03_filtrado_sor
+# ---------------------------------------------------------------------
+sor:
+  metodo: "statistical"                    # PDAL filters.outlier
+  mean_k: 10                               # [SUP]
+  multiplicador: 2.5                       # [SUP]
+  accion: "marcar"                         # se marcan como clase 7, no se borran
+  submuestreo_voxel: null                  # [SUP] NO submuestrear: rompe el recuento de rayos (Bt/Bi)
+
+# ---------------------------------------------------------------------
+# 04_suelo
+# ---------------------------------------------------------------------
+suelo:
+  metodo: "csf"                            # [SUP] la ficha no especifica el método. Alternativa: "smrf"
+  csf:
+    resolucion: 0.3                        # [SUP] cloth_resolution (m)
+    rigidez: 3                             # [SUP] terreno llano o suave
+    umbral: 0.2                            # [SUP] class_threshold (m)
+    paso_tiempo: 0.65                      # [SUP]
+    iteraciones: 500                       # [SUP]
+    slope_smooth: true                     # [SUP]
+  smrf:
+    celda: 0.5                             # [SUP]
+    pendiente: 0.15                        # [SUP]
+    ventana: 8.0                           # [SUP]
+    umbral: 0.3                            # [SUP]
+    escalar: 1.25                          # [SUP]
+
+  excluir_bajo_hilera_m: 1.1               # [DATO usuario] QA-11: bajo el seto hay HIERBA. Banda (+-m del eje GPKG) cuyo suelo CSF no se usa para el DTM
+  rechazo_sobre_calle_m: 0.12              # [DATO usuario] puntos de suelo > este valor por encima del DTM interpolado desde las calles -> no-suelo (hierba)
+# ---------------------------------------------------------------------
+# 05_dtm / 06_normalizacion / 07_chm
+# ---------------------------------------------------------------------
+dtm:
+  resolucion_m: 0.25                       # [SUP]
+  interpolacion: "idw"                     # [SUP] alternativa: "tin" (delaunay + faceraster)
+  rellenar_huecos_dist_max_m: 3.0          # [SUP] suelo ocluido bajo el seto
+  idw_window: 6                            # [SUP] writers.gdal window_size (celdas) del IDW
+normalizacion:
+  metodo: "hag_dem"                        # PDAL filters.hag_dem
+  umbral_altura_m: 0.3                     # [FICHA] se descartan puntos < 0,3 m sobre el suelo
+  aplicar_umbral_a: ["MH", "MW", "envolvente"]   # [SUP/INF] la ficha no lo hace explícito
+  conservar_bajo_umbral_para_rayos: true   # [SUP] el suelo y la hierba sirven como "fondo" del rayo
+chm:
+  resolucion_m: 0.1                        # [SUP]
+  estadistico: "max"
+
+# ---------------------------------------------------------------------
+# 08_segmentacion (por hilera, GPKG + buffer)
+# ---------------------------------------------------------------------
+hilera:
+  buffer_m: 1.2                            # [DATO usuario] 1,2 m a cada lado (2,4 m de ancho de seto): deja fuera la vegetación ajena a la hilera; el seto mide como máximo ~1,3 m de ancho por rebanada (QA-07)
+  reajustar_eje: true                      # [SUP] el GPKG es aproximado (0,2-0,44 m entre versiones)
+  reajuste_metodo: "pca"                   # [SUP] "pca" | "ransac"
+  reajuste_hag_min_m: 1.0                  # [SUP] puntos de copa para ajustar el eje
+  # Longitud de la hilera (modo completo). "nube": inicio y final = extensión de la copa en la nube; la línea del archivo
+  # vectorial solo identifica la hilera y sirve de referencia (decisión del usuario, 2026-11-20). "gpkg": la línea.
+  extension: "nube"                        # [DATO usuario] "nube" | "gpkg"
+  margen_busqueda_m: 1.0                   # [DATO usuario] barrido máximo fuera de la línea por cada extremo (entre bloques hay poca distancia)
+  extension_hag_min_m: 0.5                 # [SUP] puntos de copa para fijar la extensión (por encima de la hierba)
+  extension_celda_m: 0.1                   # [SUP] celdas a lo largo de la hilera (= rebanada)
+  extension_min_puntos: 20                 # [SUP] mínimo absoluto de puntos de copa para que una celda cuente como copa
+  extension_frac_min: 0.15                 # [SUP] y además >= 15 % de la celda típica de la hilera (excluye ramas sueltas y vegetación tras el último olivo; usuario 2026-11-20, prueba b1 h1/h7)
+  extension_paso_m: 0.1                    # [DATO usuario] barrido 0,1, 0,2 ... 1 m: el límite es el último paso con copa pegada a la hilera
+  recorte_extremos_m: 0.0                  # [SUP] metros que se quitan en cada cabecera tras fijar la extensión (0 = ninguno)
+  tramo_m: 1.5                             # [DATO usuario] agregación opcional (≈ 1 árbol)
+  pca_min_puntos: 1000                     # [SUP] mínimo de puntos de copa para reajustar el eje por PCA
+
+# ---------------------------------------------------------------------
+# 09_metricas
+# ---------------------------------------------------------------------
+metricas:
+  rebanada_m: 0.1                          # [FICHA] rebanada a lo largo de la fila (olivo)
+  franja_m: 0.1                            # [FICHA] franjas horizontales para MW
+  mh_estadistico: "max"                    # [FICHA] se calculan SIEMPRE las dos variantes: estricta (max) y robusta (percentil)
+  mh_percentil: 99.0                       # [DATO usuario] MH robusta = percentil de HAG de la rebanada
+  mw_estadistico: "max_menos_min"          # [FICHA] anchura de la franja = t_max - t_min; MW = media por franja
+  mw_percentil_t: [2.5, 97.5]              # [DATO usuario] MW robusta: anchura entre estos percentiles de t (95 % central) por franja
+  min_puntos_franja: 5                     # [SUP] franjas con menos puntos no cuentan para MW
+  min_puntos_rebanada: 50                  # [SUP]
+  # Métricas de copa adicionales (lli_core.metricas_copa y perfil_anchura; 2026-11-20): área de la sección, volumen,
+  # altura de inicio y profundidad de copa, anchura máxima y su altura, TRV y perfil de anchura por altura.
+  distancia_entre_hileras_m: null          # [SUP] para el TRV (m³/ha). null = se mide en el archivo vectorial (línea más próxima de otra hilera)
+  distancia_min_otra_hilera_m: 1.0         # [SUP] al medir en el archivo vectorial, líneas a menos de esta distancia se toman como la propia hilera
+
+porosidad:
+  metodo: "ambos"                          # [DATO usuario] "pcap" (principal: disparos reales con los sin eco) | "rayos" (reserva: trazado hasta los puntos LAS) | "ambos" (calcula las dos; la principal es pcap si su extrínseca es válida)
+  envolvente_estadistico: "max"            # [SUP] envolvente de copa por celda (rebanada x franja): "max" estricta | "percentil"
+  envolvente_percentil_t: [1.0, 99.0]      # [SUP] si envolvente_estadistico = "percentil"
+  envolvente_relleno: false                # [DATO usuario 2026-11-16] true = rellenar los huecos interiores de la copa entre la franja ocupada más baja y la más alta de cada rebanada (como Escolà 2017); false = solo celdas con puntos (versión con la que se calcularon los resultados oficiales)
+  paso_muestreo_rayo_m: 0.025              # [SUP] paso en t (perpendicular a la fila) para ver si el rayo entra en la envolvente
+  origen_t_abs_m: [0.8, 3.0]               # [SUP] el sensor debe estar en la calle adyacente: |t| del origen en este rango
+  min_franjas_fiables: 3                   # [SUP] nº mínimo de franjas con >= min_rayos_celda para dar P de la rebanada/lado
+  rayos_chunk: 60000                       # tamaño de lote de disparos (memoria)
+  umbral_P_sensibilidad_m: 0.6             # [DATO usuario] variante de sensibilidad: P solo con las franjas desde esta altura (el oficial usa normalizacion.umbral_altura_m = 0,3 m)
+  tol_extremo_m: 0.025                     # [SUP] inflado de la envolvente para decidir si el eco cae dentro (sesga P: probar 0,10 y 0,20)
+  margen_s_m: 3.0                          # [SUP] margen en s alrededor del tramo para considerar rayos
+  bloques_por_lote: 4000                   # [SUP] bloques de disparo (x32 canales) por lote del pcap; memoria acotada
+  definicion_Bi: "atraviesa"               # [SUP/INF] decisión pendiente 3: Bi = haces que pasan -> P = porosidad, L = 1-P
+  rayos:
+    trayectoria: "posi"                    # [SUP] "posi" | "hf"; se decide en 01_qc
+    interpolacion_posicion: "lineal"
+    interpolacion_orientacion: "slerp"     # solo si se usa la orientación
+    brazo_palanca_m: [0.0, 0.0, 0.0]       # [SUP] extrínseca escáner<->IMU desconocida (LAS-1.EP ausente); _Rover.csv da 0,047/0,032/0,037 (INS)
+    azimut_max_respecto_normal_deg: 25     # [SUP] emula el plano vertical 2D perpendicular a la fila
+    elevacion_rango_deg: [-60, 15]         # [SUP] limita los rayos ascendentes sin fondo (sesgo "cielo")
+    exigir_fondo: true                     # [SUP] contar solo rayos cuyo trayecto podría devolver eco tras la copa
+    alcance_max_m: 30                      # [SUP]
+    min_rayos_celda: 30                    # [SUP] por debajo -> celda no fiable
+    promedio_lados: "media"                # [FICHA] P por lado y media de ambos
+    distancia_asignacion_lado_m: 0.5       # [FICHA] valor asignado a 0,5 m del eje en cada lado
+  voxel:
+    tam_voxel_m: 0.05                      # [SUP] muy sensible; probar 0,03 / 0,05 / 0,10
+    subcolumna_s_m: 0.05                   # [SUP]
+  rayos_reserva:
+    muestras_por_punto_max: 0              # [SUP] 0 = usar todos los puntos del recorte como extremo del rayo
+    submuestreo_puntos_origen: 1           # [SUP] 1 = todos (NO submuestrear; solo para pruebas rápidas)
+
+# ---------------------------------------------------------------------
+# 10_lli
+# ---------------------------------------------------------------------
+lli:
+  variantes_mh_mw: ["estricta", "percentil"]   # [DATO usuario] LLI con MH/MW estrictos y con percentil
+  tramo_origen: "inicio_recortado"         # [SUP] los tramos de 1,5 m se cuentan desde el inicio del tramo recortado de la hilera
+  formula: "MH * MW * (1 - P)"             # [FICHA] m²
+  p_en_fraccion: true                      # [FICHA] P en 0-1 (el PDF la expresa en %)
+  filtro_atipicos_de: 2.5                  # [FICHA] ±2,5 desviaciones típicas
+  min_rebanadas_tramo: 8                   # [SUP] tramos de 1,5 m con menos rebanadas se descartan
+  filtro_ambito: "hilera"                  # [SUP]
+  agregacion: ["hilera", "tramo"]          # [DATO usuario] por hilera y, opcionalmente, por tramo de 1,5 m
+  estadistico_agregado: "media"            # [FICHA]
+  rango_esperado_m2: [1.0, 7.0]            # [SUP] seto 4 x 1,5 m; solo advertencia
+  qa_signo_L: true                         # [SUP] L debe correlacionar positivamente con la densidad de copa
+
+sensibilidad:                              # [SUP] sustituye a la validación (no hay datos de campo)
+  buffer_m: [1.25, 1.5, 1.75]
+  azimut_max_respecto_normal_deg: [15, 25, 35]
+  tam_voxel_m: [0.03, 0.05, 0.10]
+  suelo_metodo: ["csf", "smrf"]
+
+# ---------------------------------------------------------------------
+# 11_exportar
+# ---------------------------------------------------------------------
+exportar:
+  formatos: ["gpkg", "csv", "geotiff"]
+  las_con_dimensiones_extra: true          # HAG, id_hilera, s, t, lado, ruido
+  comprimir_laz: false                     # [SUP]
+  guardar_copia_config: true
+
+# ---------------------------------------------------------------------
+# Trayectoria, pcap y extrínseca (módulos trayectoria.py / pcap_hesai.py / extrinseca.py)
+# ---------------------------------------------------------------------
+trayectoria_modelo:
+  fuente: "hf"                             # [DATO] result_trajectory3d_high_freq.txt (post-SLAM, 200 Hz)
+  ajuste_utm: "kabsch_posi"                # [SUP] local->UTM: ajuste rígido de la trayectoria hf frente a PosI (lat/lon/h -> EPSG del ensayo); luego se refina con la extrínseca
+  epsg_posi: 4979                          # [SUP] lat/lon/h elipsoidal ETRS89~WGS84
+  orden_cuaternion: "xyzw"                 # [DATO] columnas 4-7 = qx qy qz qw
+
+pcap:
+  # ruta del .pcap: se localiza en la carpeta de brutos (SCAN/Scanner1/*.pcap) o se da en la ficha
+  unidad_distancia_m: 0.005                # [DATO] 5 mm: lo dice la cabecera del paquete y lo confirma el ajuste (escala k=1,24 con 4 mm); NO son 4 mm
+  elevaciones_deg: "xt32_estandar"         # [SUP] canal 1=+15 ... canal 32=-16 (paso 1°). NO verificado con el manual
+  fuente_tiempo: "sensor"                  # [SUP] "sensor" (fecha UTC + µs de la cola) | "host" (cabecera pcap); se estima el desfase
+  desfase_tiempo_s: null                   # null = estimarlo en la extrínseca; si no, valor fijo (s) a sumar al tiempo del pcap
+  rango_busqueda_desfase_s: [-0.5, 0.5]    # [SUP]
+  dist_min_m: 0.3                          # [SUP] se ignoran ecos más cercanos (cuerpo del operador/equipo)
+  dist_max_m: 60.0                         # [SUP]
+  signo_azimut: 1                          # [SUP] +1: x=sin(az), y=cos(az) (Hesai); -1 invierte el sentido
+  modo_calibracion: "global_bloque"        # [DATO usuario 2026-11-18] "global_bloque" = un montaje del escáner para todas las calles del bloque
+                                           # (calibracion_global.py; arranca de la calibración por calle) | "por_calle" = un montaje por calle (versión anterior)
+  calibracion_global:                      # solo con modo_calibracion = "global_bloque"
+    lectura_cuaternion: {w: "ultimo", perm: [1, 2, 0], signos: [-1, 1, -1]}   # [DATO] columnas 5-8 del high_freq: escalar al final; x<-col 6 (-), y<-col 7 (+), z<-col 5 (-) ("ultimo_yzx_-+-"; 14/15 calles válidas en b1 frente a 3/15 con qx qy qz qw)
+    elevaciones: "EP"                      # [DATO] "EP" = tabla de elevaciones del fichero LAS-1.EP del RS30 | "xt32_estandar" (+15..-16°, paso 1°)
+    n_arranques: 2                         # [DATO usuario 2026-11-18: "lo mejor posible"] se ajusta desde las n calles de menor p90 y se queda el montaje con más calles válidas
+    palanca: "libre"                       # [DATO] palanca escáner->cuerpo común: "libre" (ajustada) | "cero"; en Cabra libre ≈ cero
+    n_grupos_lsq_por_calle: 120            # [SUP] grupos por calle en los mínimos cuadrados conjuntos (los nudos usan los n_puntos_ajuste // 300)
+    n_grupos_holdout: 600                  # [DATO] igual que validacion.holdout (QA-22)
+    semilla_holdout: 777                   # [DATO] igual que validacion.holdout: mismos grupos de validación que la calibración por calle
+  extrinseca:
+    n_puntos_ajuste: 150000                # [SUP] ecos del pcap usados en el ICP (submuestreo solo aquí, no en el recuento)
+    iteraciones_icp: 12                    # [SUP]
+    dist_max_correspondencia_m: [1.0, 0.5, 0.25, 0.15]   # [SUP] se estrecha por etapas
+    ajustar_escala_distancia: false        # [DATO] con 5 mm el ajuste daba k~1,24 con 4 mm; se deja fijo (poner true para diagnóstico)
+    ajustar_offset_elevacion: true         # [SUP] diagnóstico del ángulo vertical
+    ajustar_traslacion_mundo: true         # [SUP] absorbe el error del ajuste local->UTM
+    probar_signo_azimut: false             # [DATO] el sentido del azimut (+1) está validado; true prueba +1 y -1 (más lento)
+    ajustar_deriva_dW: true                # [SUP] deriva lineal del desplazamiento del mundo por ventana (SLAM optimizado vs hf)
+    ajustar_deriva_rotacion: true          # [SUP] deriva angular lineal por ventana (hf vs LAS)
+    omega_max_deg_s: 20                    # [SUP] se excluyen (calibración, validación y P) los tramos con giro del cuerpo > este valor (vueltas en cabecera)
+    nudos_dW_s: 5                          # [SUP] nudos (s) del desplazamiento del mundo lineal a trozos (0 = desactivado)
+    reutilizar: true                       # [SUP] reutilizar salidas/09_metricas/extrinseca.json si existe (borrarlo para recalcular)
+    residuo_mediana_max_m: 0.15            # [DATO usuario] una ventana es válida si mediana < este valor ...
+    residuo_p90_max_m: 0.30                # [DATO usuario] ... Y p90 < este valor; las ventanas no válidas se excluyen de P
+
+# ---------------------------------------------------------------------
+# Claves SOLO DOCUMENTALES (no las lee el código; QA-14). Se conservan como registro de la ficha/decisiones:
+#   porosidad.definicion_Bi, rayos.trayectoria (el código usa siempre la hf), rayos.interpolacion_*, rayos.brazo_palanca_m,
+#   rayos.distancia_asignacion_lado_m, rayos.promedio_lados, rayos.elevacion_rango_deg y azimut_max... SÍ se usan,
+#   porosidad.voxel.*, rayos_reserva.muestras_por_punto_max, sensibilidad.*, lli.estadistico_agregado/filtro_ambito/tramo_origen,
+#   trayectoria_modelo.fuente/ajuste_utm/orden_cuaternion, pcap.fuente_tiempo/desfase_tiempo_s/elevaciones_deg,
+#   hilera.reajuste_metodo(solo "pca"), qc.densidad_*, qc.exigir_bilateral
+# ---------------------------------------------------------------------
+
+# ---------------------------------------------------------------------
+# Ejecución
+# ---------------------------------------------------------------------
+ejecucion:
+  n_procesos: 3                            # [DATO usuario] hileras en paralelo en el modo completo (RAM pico estimada 5-7 GB por bloque)

@@ -1,0 +1,6 @@
+# Finales de línea normalizados a LF en el repositorio
+* text=auto eol=lf
+*.R    text eol=lf
+*.py   text eol=lf
+*.yaml text eol=lf
+*.md   text eol=lf

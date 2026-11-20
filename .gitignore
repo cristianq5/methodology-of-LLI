@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------
+# Este repositorio contiene SOLO código, configuración y documentación.
+# Los datos (nubes LAS, pcap, trayectorias, GPKG) y las salidas NUNCA se suben.
+# ---------------------------------------------------------------
+
+# Datos de entrada (solo lectura, fuera del repo)
+*.las
+*.laz
+*.pcap
+*.PosI
+*.gga
+*.EP
+*.gpkg
+*.shp
+*.shx
+*.dbf
+*.prj
+*.tif
+*.tiff
+Datos_brutos/
+LAS/
+
+# Salidas y logs
+salidas*/
+logs*/
+*.log
+*.csv
+*.parquet
+*.npy
+*.npz
+*.pkl
+*.png
+*.jpg
+*.pdf
+*.html
+
+# Copias de seguridad de configuración
+*.bak*
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.pytest_cache/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+renv/library/
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

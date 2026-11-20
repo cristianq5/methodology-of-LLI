@@ -1,0 +1,11 @@
+# Paquetes R del pipeline LLI. Probado con R 4.4.2 (Windows). Versiones = las probadas.
+# 'parallel' es de base R. Por qué cada uno: R/README.md
+data.table>=1.18.2.1
+yaml>=2.3.12
+jsonlite>=2.0.0
+lidR>=4.3.2
+RCSF>=1.0.2
+sf>=1.1.0
+terra>=1.9.11
+RANN>=2.6.2
+minpack.lm>=1.2.4
